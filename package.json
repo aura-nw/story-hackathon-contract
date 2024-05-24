@@ -1,12 +1,12 @@
 {
-  "name": "story-protocol-contract-boilerplate",
+  "name": "story-hackathon-contract",
   "version": "1.0.0",
-  "description": "Boilerplate sample code for interacting with Story Protocol",
+  "description": "story-hackathon-contract with Story Protocol",
   "directories": {
     "lib": "lib",
     "test": "test"
   },
-  "author": "Story Protocol",
+  "author": "Aura Network",
   "license": "MIT",
   "devDependencies": {
     "ds-test": "https://github.com/dapphub/ds-test",
