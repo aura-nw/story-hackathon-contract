@@ -3,10 +3,11 @@
 pragma solidity ^0.8.23;
 pragma experimental ABIEncoderV2;
 
-import { LicenseToken } from "@storyprotocol/core/LicenseToken.sol";
-import { LicensingModule } from "@storyprotocol/core/modules/licensing/LicensingModule.sol";
-import { IPAssetRegistry } from "@storyprotocol/core/registries/IPAssetRegistry.sol";
-import { CoreMetadataViewModule } from "@storyprotocol/core/modules/metadata/CoreMetadataViewModule.sol";
+import { LicenseToken } from "../../node_modules/@story-protocol/protocol-core/contracts/LicenseToken.sol";
+import { LicensingModule } from "../../node_modules/@story-protocol/protocol-core/contracts/modules/licensing/LicensingModule.sol";
+import { CoreMetadataViewModule } from "../../node_modules/@story-protocol/protocol-core/contracts/modules/metadata/CoreMetadataViewModule.sol";
+import { IPAssetRegistry } from "../../node_modules/@story-protocol/protocol-core/contracts/registries/IPAssetRegistry.sol";
+import { LicenseRegistry } from "../../node_modules/@story-protocol/protocol-core/contracts/registries/LicenseRegistry.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -321,6 +322,7 @@ contract StoryLaunchpad is AccessControl, IERC721Receiver {
             //Register Derivative for NFT with licenseId
             uint256[] memory licenseTokenIds = new uint256[](1);
             licenseTokenIds[0] = getLicenseIdByLicensor(_licensorIpid);
+            require(licenseTokenIds[0] > 0, "StoryLaunchpad: License token not avaiable for mint");    
 
             LicensingModule(licensingModuleAddr).registerDerivativeWithLicenseTokens({              
                 childIpId: childIpId,

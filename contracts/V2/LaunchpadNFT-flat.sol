@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.20 ^0.8.23;
 
 // node_modules/@openzeppelin/contracts/interfaces/draft-IERC6093.sol
 
@@ -1445,7 +1445,7 @@ library SafeERC20 {
     }
 }
 
-// contracts/AccessControl.sol
+// contracts/V2/AccessControl.sol
 
 
 
@@ -1485,7 +1485,7 @@ contract AccessControl {
     }
 }
 
-// contracts/ILaunchpadNFT.sol
+// contracts/V2/ILaunchpadNFT.sol
 
 
 
@@ -2152,7 +2152,7 @@ abstract contract ERC721Enumerable is ERC721, IERC721Enumerable {
     }
 }
 
-// contracts/LaunchpadNFT.sol
+// contracts/V2/LaunchpadNFT.sol
 
 
 
@@ -2178,7 +2178,7 @@ contract LaunchpadNFT is  ERC721Enumerable, AccessControl {
     );
 
     constructor(address _owner, string memory _name, string memory _symbol) ERC721(_name, _symbol) AccessControl(_owner) {
-        _counter = 137e10;
+        _counter = 0;
         minters[msg.sender] = true;
     }
 
