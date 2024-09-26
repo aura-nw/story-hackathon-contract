@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity =0.8.23 ^0.8.0 ^0.8.20 ^0.8.23;
+pragma solidity =0.8.26 ^0.8.0 ^0.8.20 ^0.8.23;
 pragma experimental ABIEncoderV2;
 
 // node_modules/@openzeppelin/contracts/access/manager/IAccessManaged.sol

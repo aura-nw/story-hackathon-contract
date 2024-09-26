@@ -8,6 +8,7 @@ contract AccessControl {
     using SafeERC20 for IERC20;
 
     address payable public owner;
+    mapping(address => bool) public operators;
 
     event SetOperator(address indexed add, bool value);
 
@@ -20,10 +21,20 @@ contract AccessControl {
         _;
     }
 
+    modifier onlyOperator() {
+        require(operators[msg.sender]);
+        _;
+    }    
+
     function setOwner(address payable _newOwner) external onlyOwner {
         require(_newOwner != address(0));
         owner = _newOwner;
     }
+
+    function setOperator(address _operator, bool _v) external onlyOwner {
+        operators[_operator] = _v;
+        emit SetOperator(_operator, _v);
+    }    
 
     function emergencyWithdraw(address _token, address payable _to, uint256 amount) external onlyOwner {
         if (_token == address(0x0)) {
