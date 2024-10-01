@@ -12,6 +12,7 @@ import { IPILicenseTemplate, PILTerms } from "../../node_modules/@story-protocol
 import { ILicenseTemplate } from "../../node_modules/@story-protocol/protocol-core/contracts/interfaces/modules/licensing/ILicenseTemplate.sol";
 import { IRoyaltyModule } from "../../node_modules/@story-protocol/protocol-core/contracts/interfaces/modules/royalty/IRoyaltyModule.sol";
 import { IIPAccount } from "../../node_modules/@story-protocol/protocol-core/contracts/interfaces/IIPAccount.sol";
+import { AccessPermission } from "../../node_modules/@story-protocol/protocol-core/contracts/lib/AccessPermission.sol";
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -20,7 +21,7 @@ import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import "./AccessControl.sol";
 import "./LaunchpadNFT.sol";
 
-contract StoryCampaign is AccessControl, IERC721Receiver {
+contract DepipGateway is AccessControl, IERC721Receiver {
     using SafeERC20 for IERC20;
 
     address public ipAssetRegistry = 0x1a9d0d28a0422F26D31Be72Edc6f13ea4371E11B;
@@ -30,14 +31,7 @@ contract StoryCampaign is AccessControl, IERC721Receiver {
     address public coreMetadataView = 0x48ecAa9F197135A4614d1c7A5Db5641ffd8ad2b9; 
     address public licenseRegistry = 0xedf8e338F05f7B1b857C3a8d3a0aBB4bc2c41723; 
     address public royaltyModule = 0x3C27b2D7d30131D4b58C3584FD7c86e3358744de;
-
-    address public collectionAddress;
-
-    uint256 private maxParents = 5;
-    uint256 private maxIpasset = 30;
-
-    //creator address -> count
-    mapping(address => uint256) public userMintCount;
+    address public accessController = 0xa8bF970E95278A7aF475CE13C24cdcC3a2234a3D;
 
     constructor(address _owner) public AccessControl(_owner)  {
 
@@ -56,6 +50,16 @@ contract StoryCampaign is AccessControl, IERC721Receiver {
         bytes32 nftMetadataHash;
     }    
 
+    /// @notice Struct for signature data for execution via IP Account.
+    /// @param signer The address of the signer for execution with signature.
+    /// @param deadline The deadline for the signature.
+    /// @param signature The signature for the execution via IP Account.
+    struct SignatureData {
+        address signer;
+        uint256 deadline;
+        bytes signature;
+    }    
+
     event CollectionCreated(address indexed nftContract);
     /**
      * Always returns `IERC721Receiver.onERC721Received.selector`.
@@ -66,7 +70,11 @@ contract StoryCampaign is AccessControl, IERC721Receiver {
 
     // function _owns(address _licensorIpid) internal view returns (bool) {
     //     return (ICoreMetadataViewModule(coreMetadataView).getOwner(_licensorIpid) == msg.sender);
-    // }  
+    // }
+
+    function setaccessController(address _addr) public onlyOwner {
+        accessController = _addr;
+    }         
 
     function setIpAssetRegistry(address _addr) public onlyOwner {
         ipAssetRegistry = _addr;
@@ -74,15 +82,7 @@ contract StoryCampaign is AccessControl, IERC721Receiver {
 
     function setLicensingModule(address _addr) public onlyOwner {
         licensingModule = _addr;
-    }      
-
-    function setMaxParents(uint256 _maxParents) public onlyOwner {
-        maxParents = _maxParents;
-    }         
-
-    function setMaxIpasset(uint256 _maxIpasset) public onlyOwner {
-        maxParents = _maxIpasset;
-    }            
+    }                 
 
     function setLicenseToken(address _addr) public onlyOwner {
         licenseToken = _addr;
@@ -94,11 +94,7 @@ contract StoryCampaign is AccessControl, IERC721Receiver {
 
     function setLicenseRegistry(address _addr) public onlyOwner {
         licenseRegistry = _addr;
-    }       
-
-    function setCollectionAddress(address _addr) public onlyOwner {
-        collectionAddress = _addr;
-    }    
+    }         
 
     function setLicenseTemplate(address _addr) public onlyOwner {
         licenseTemplate = _addr;
@@ -124,12 +120,13 @@ contract StoryCampaign is AccessControl, IERC721Receiver {
         }
     }
 
-    function createCollection(string memory colectionName, string memory colectionSymbol) public onlyOperator {
+    function createCollection(string memory colectionName, string memory colectionSymbol) public onlyOperator returns (address collectionAddress){
         collectionAddress = address(new LaunchpadNFT(msg.sender, colectionName, colectionSymbol));
         emit CollectionCreated(address(collectionAddress));
     }   
 
     function _mintAndRegisterIp(
+        address collectionAddress,
         address recipient,
         string memory uri
     ) internal returns (address ipId, uint256 tokenId) {
@@ -141,19 +138,55 @@ contract StoryCampaign is AccessControl, IERC721Receiver {
     }     
 
     function mintAndRegisterIpAndAttach(
+        address collectionAddress,
         address recipient,
         string memory uri,
         PILTerms calldata terms
     ) public onlyOperator returns (address ipId, uint256 tokenId, uint256 licenseTermsId) {
-        require(userMintCount[recipient] + 1 <= maxIpasset, "StoryCampaign: AboveMintLimit");
-
-        userMintCount[recipient] += 1; 
-        (ipId, tokenId) = _mintAndRegisterIp(address(this), uri);
+        (ipId, tokenId) = _mintAndRegisterIp(collectionAddress, address(this), uri);
         //Register and attack PIL
         licenseTermsId = _registerPILTermsAndAttach(ipId, terms);
 
         LaunchpadNFT(collectionAddress).safeTransferFrom(address(this), recipient, tokenId);
     }
+
+    function registerPilAndAttach(
+        address collectionAddress,
+        address recipient,
+        string memory uri,
+        PILTerms calldata terms
+    ) public onlyOperator returns (address ipId, uint256 tokenId, uint256 licenseTermsId) {
+        (ipId, tokenId) = _mintAndRegisterIp(collectionAddress, address(this), uri);
+        //Register and attack PIL
+        licenseTermsId = _registerPILTermsAndAttach(ipId, terms);
+
+        LaunchpadNFT(collectionAddress).safeTransferFrom(address(this), recipient, tokenId);
+    }  
+
+    /// @notice Register Programmable IP License Terms (if unregistered) and attach it to IP.
+    /// @param ipId The ID of the IP.
+    /// @param termId The PIL terms ID to attach.
+    /// @return licenseTermsId The ID of the newly registered PIL terms.
+    /// @param sigAttach Signature data for attachLicenseTerms to the IP via the Licensing Module.
+    function attachPILTerms(
+        address ipId,
+        uint256 termId,
+        SignatureData calldata sigAttach
+    ) external returns (uint256 licenseTermsId) {
+
+        // Returns if license terms are already attached.
+        if (ILicenseRegistry(licenseRegistry).hasIpAttachedLicenseTerms(ipId, licenseTemplate, licenseTermsId)) return licenseTermsId;
+
+        _setPermissionForModule(
+            ipId,
+            address(licensingModule),
+            address(accessController),
+            ILicensingModule.attachLicenseTerms.selector,
+            sigAttach
+        );
+                
+        ILicensingModule(licensingModule).attachLicenseTerms(ipId, licenseTemplate, licenseTermsId);   
+    }        
 
     function _registerPILTermsAndAttach(
         address ipId,
@@ -169,18 +202,12 @@ contract StoryCampaign is AccessControl, IERC721Receiver {
     }
         
     function mintAndRegisterIpAndMakeDerivative(
+        address collectionAddress,
         MakeDerivative calldata derivData,
         IPMetadata calldata ipMetadata,
         address recipient
     ) external onlyOperator returns (address ipId, uint256 tokenId) {
-
-        require(derivData.parentIpIds.length <= maxParents, "StoryCampaign: AboveParentLimit");
-
-        for (uint256 i = 0; i < derivData.parentIpIds.length; i++) {
-            (, address nftContract,) = getToken(derivData.parentIpIds[i]);
-            require(nftContract == collectionAddress, "StoryCampaign: Ipasset not come from this contest collection");
-        }        
-
+    
         tokenId = LaunchpadNFT(collectionAddress).mintTokens(address(this), ipMetadata.nftMetadataURI);
         require(tokenId > 0);
 
@@ -258,5 +285,72 @@ contract StoryCampaign is AccessControl, IERC721Receiver {
                 IERC20(mintFeeCurrencyToken).forceApprove(royaltyModule, totalMintFee);
             }
         }
-    }      
+    } 
+
+    /// @dev Sets permission via signature to allow this contract to interact with the Licensing Module on behalf of the
+    /// provided IP Account.
+    /// @param ipId The ID of the IP.
+    /// @param module The address of the module to set the permission for.
+    /// @param accessController The address of the Access Controller contract.
+    /// @param selector The selector of the function to be permitted for execution.
+    /// @param sigData Signature data for setting the permission.
+    function _setPermissionForModule(
+        address ipId,
+        address module,
+        address accessController,
+        bytes4 selector,
+        SignatureData calldata sigData
+    ) internal {
+        IIPAccount(payable(ipId)).executeWithSig(
+            accessController,
+            0,
+            abi.encodeWithSelector(
+                IAccessController.setPermission.selector,
+                address(ipId),
+                address(this),
+                address(module),
+                selector,
+                AccessPermission.ALLOW
+            ),
+            sigData.signer,
+            sigData.deadline,
+            sigData.signature
+        );
+    }
+
+    /// @dev Sets batch permission via signature to allow this contract to interact with mutiple modules
+    /// on behalf of the provided IP Account.
+    /// @param ipId The ID of the IP.
+    /// @param accessController The address of the Access Controller contract.
+    /// @param modules The addresses of the modules to set the permission for.
+    /// @param selectors The selectors of the functions to be permitted for execution.
+    /// @param sigData Signature data for setting the batch permission.
+    function _setBatchPermissionForModules(
+        address ipId,
+        address accessController,
+        address[] memory modules,
+        bytes4[] memory selectors,
+        SignatureData calldata sigData
+    ) internal {
+        // assumes modules and selectors must have a 1:1 mapping
+        AccessPermission.Permission[] memory permissionList = new AccessPermission.Permission[](modules.length);
+        for (uint256 i = 0; i < modules.length; i++) {
+            permissionList[i] = AccessPermission.Permission({
+                ipAccount: ipId,
+                signer: address(this),
+                to: modules[i],
+                func: selectors[i],
+                permission: AccessPermission.ALLOW
+            });
+        }
+
+        IIPAccount(payable(ipId)).executeWithSig(
+            accessController,
+            0,
+            abi.encodeWithSelector(IAccessController.setBatchPermissions.selector, permissionList),
+            sigData.signer,
+            sigData.deadline,
+            sigData.signature
+        );
+    }         
 }
