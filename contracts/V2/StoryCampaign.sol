@@ -18,7 +18,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import "./AccessControl.sol";
-import "./LaunchpadNFT.sol";
+import "./PunkgaContestNFT.sol";
 
 contract StoryCampaign is AccessControl, IERC721Receiver {
     using SafeERC20 for IERC20;

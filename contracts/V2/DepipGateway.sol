@@ -3,6 +3,16 @@
 pragma solidity ^0.8.23;
 pragma experimental ABIEncoderV2;
 
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { BeaconProxy } from "@openzeppelin/contracts/proxy/beacon/BeaconProxy.sol";
+import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import { ERC721Holder } from "@openzeppelin/contracts/token/ERC721/utils/ERC721Holder.sol";
+import { ERC165Checker } from "@openzeppelin/contracts/utils/introspection/ERC165Checker.sol";
+import { UpgradeableBeacon } from "@openzeppelin/contracts/proxy/beacon/UpgradeableBeacon.sol";
+import { UUPSUpgradeable } from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import { MulticallUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/MulticallUpgradeable.sol";
+// solhint-disable-next-line max-line-length
+
 import { IAccessController } from "../../node_modules/@story-protocol/protocol-core/contracts/interfaces/access/IAccessController.sol";
 import { IIPAssetRegistry } from "../../node_modules/@story-protocol/protocol-core/contracts/interfaces/registries/IIPAssetRegistry.sol";
 import { ILicenseRegistry } from "../../node_modules/@story-protocol/protocol-core/contracts/interfaces/registries/ILicenseRegistry.sol";
@@ -13,15 +23,21 @@ import { ILicenseTemplate } from "../../node_modules/@story-protocol/protocol-co
 import { IRoyaltyModule } from "../../node_modules/@story-protocol/protocol-core/contracts/interfaces/modules/royalty/IRoyaltyModule.sol";
 import { IIPAccount } from "../../node_modules/@story-protocol/protocol-core/contracts/interfaces/IIPAccount.sol";
 import { AccessPermission } from "../../node_modules/@story-protocol/protocol-core/contracts/lib/AccessPermission.sol";
+import { ILicenseToken } from "../../node_modules/@story-protocol/protocol-core/contracts/interfaces/ILicenseToken.sol";
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import "./AccessControl.sol";
 import "./LaunchpadNFT.sol";
 
-contract DepipGateway is AccessControl, IERC721Receiver {
+contract DepipGateway is 
+    AccessControl, 
+    MulticallUpgradeable,
+    ERC721Holder,
+    UUPSUpgradeable 
+{
+    using ERC165Checker for address;
     using SafeERC20 for IERC20;
 
     address public ipAssetRegistry = 0x1a9d0d28a0422F26D31Be72Edc6f13ea4371E11B;
@@ -43,6 +59,12 @@ contract DepipGateway is AccessControl, IERC721Receiver {
         bytes royaltyContext;
     }
 
+    struct RegisterIpData {
+        address[] nftAddress;
+        uint256[] tokenIds;
+        uint256[] licenseTermsIds;
+    }
+
     struct IPMetadata {
         string ipMetadataURI;
         bytes32 ipMetadataHash;
@@ -61,12 +83,6 @@ contract DepipGateway is AccessControl, IERC721Receiver {
     }    
 
     event CollectionCreated(address indexed nftContract);
-    /**
-     * Always returns `IERC721Receiver.onERC721Received.selector`.
-     */
-    function onERC721Received(address, address, uint256, bytes memory) public virtual override returns (bytes4) {
-        return this.onERC721Received.selector;
-    }
 
     // function _owns(address _licensorIpid) internal view returns (bool) {
     //     return (ICoreMetadataViewModule(coreMetadataView).getOwner(_licensorIpid) == msg.sender);
@@ -150,6 +166,24 @@ contract DepipGateway is AccessControl, IERC721Receiver {
         LaunchpadNFT(collectionAddress).safeTransferFrom(address(this), recipient, tokenId);
     }
 
+    function registerIpAndAttach(
+        RegisterIpData[] registerIpData,
+        SignatureData calldata sigRegister
+    ) public onlyOperator {
+
+        _setPermissionForModule(
+            ipId,
+            address(licensingModule),
+            address(accessController),
+            ILicensingModule.attachLicenseTerms.selector,
+            sigRegister
+        );
+        for (uint256 i = 0; i < registerIpData.length; i++) {
+            uint256 ipId = IIPAssetRegistry(ipAssetRegistry).register(block.chainid, registerIpData[1].nftAddress, registerIpData[1].tokenId);
+            _attachPILTerms(ipId, registerIpData[1].licenseTermsIds);
+        }
+    }    
+
     function registerPilAndAttach(
         address collectionAddress,
         address recipient,
@@ -168,23 +202,13 @@ contract DepipGateway is AccessControl, IERC721Receiver {
     /// @param termId The PIL terms ID to attach.
     /// @return licenseTermsId The ID of the newly registered PIL terms.
     /// @param sigAttach Signature data for attachLicenseTerms to the IP via the Licensing Module.
-    function attachPILTerms(
+    function _attachPILTerms(
         address ipId,
-        uint256 termId,
-        SignatureData calldata sigAttach
-    ) external returns (uint256 licenseTermsId) {
+        uint256 termId
+    ) internal returns (uint256 licenseTermsId) {
 
         // Returns if license terms are already attached.
-        if (ILicenseRegistry(licenseRegistry).hasIpAttachedLicenseTerms(ipId, licenseTemplate, licenseTermsId)) return licenseTermsId;
-
-        _setPermissionForModule(
-            ipId,
-            address(licensingModule),
-            address(accessController),
-            ILicensingModule.attachLicenseTerms.selector,
-            sigAttach
-        );
-                
+        if (ILicenseRegistry(licenseRegistry).hasIpAttachedLicenseTerms(ipId, licenseTemplate, licenseTermsId)) return licenseTermsId;         
         ILicensingModule(licensingModule).attachLicenseTerms(ipId, licenseTemplate, licenseTermsId);   
     }        
 
@@ -231,6 +255,81 @@ contract DepipGateway is AccessControl, IERC721Receiver {
 
         LaunchpadNFT(collectionAddress).safeTransferFrom(address(this), recipient, tokenId);
     } 
+
+    /// @notice Register the given NFT as a derivative IP with metadata without license tokens.
+    /// @param nftContract The address of the NFT collection.
+    /// @param tokenId The ID of the NFT.
+    /// @param derivData The derivative data to be used for registerDerivative.
+    /// @param ipMetadata OPTIONAL. The desired metadata for the newly registered IP.
+    /// @param sigMetadata OPTIONAL. Signature data for setAll (metadata) for the IP via the Core Metadata Module.
+    /// @param sigRegister Signature data for registerDerivative for the IP via the Licensing Module.
+    /// @return ipId The ID of the newly registered IP.
+    function registerIpAndMakeDerivative(
+        address nftContract,
+        uint256 tokenId,
+        MakeDerivative calldata derivData,
+        IPMetadata calldata ipMetadata,
+        SignatureData calldata sigMetadata,
+        SignatureData calldata sigRegister
+    ) external returns (address ipId) {
+  
+        ipId = IIPAssetRegistry(ipAssetRegistry).register(block.chainid, nftContract, tokenId);
+
+        _setPermissionForModule(
+            ipId,
+            address(licensingModule),
+            address(accessController),
+            ILicensingModule.attachLicenseTerms.selector,
+            sigRegister
+        );
+
+        _collectMintFeesAndSetApproval(
+            msg.sender,
+            derivData.parentIpIds,
+            derivData.licenseTermsIds
+        );  
+
+        ILicensingModule(licensingModule).registerDerivative({
+            childIpId: ipId,
+            parentIpIds: derivData.parentIpIds,
+            licenseTermsIds: derivData.licenseTermsIds,
+            licenseTemplate: licenseTemplate,
+            royaltyContext: derivData.royaltyContext
+        });
+    }    
+
+    /// @notice Register the given NFT as a derivative IP using license tokens.
+    /// @dev Caller must own the license tokens and have approved SPG to transfer them.
+    /// @param nftContract The address of the NFT collection.
+    /// @param tokenId The ID of the NFT.
+    /// @param licenseTokenIds The IDs of the license tokens to be burned for linking the IP to parent IPs.
+    /// @param royaltyContext The context for royalty module, should be empty for Royalty Policy LAP.
+    /// @param ipMetadata OPTIONAL. The desired metadata for the newly registered IP.
+    /// @param sigMetadata OPTIONAL. Signature data for setAll (metadata) for the IP via the Core Metadata Module.
+    /// @param sigRegister Signature data for registerDerivativeWithLicenseTokens for the IP via the Licensing Module.
+    /// @return ipId The ID of the newly registered IP.
+    function registerIpAndMakeDerivativeWithLicenseTokens(
+        address nftContract,
+        uint256 tokenId,
+        uint256[] calldata licenseTokenIds,
+        bytes calldata royaltyContext,
+        IPMetadata calldata ipMetadata,
+        SignatureData calldata sigMetadata,
+        SignatureData calldata sigRegister
+    ) external returns (address ipId) {
+        _collectLicenseTokens(licenseTokenIds, address(licenseToken));
+
+        ipId = IIPAssetRegistry(ipAssetRegistry).register(block.chainid, nftContract, tokenId);
+
+        _setPermissionForModule(
+            ipId,
+            address(licensingModule),
+            address(accessController),
+            ILicensingModule.attachLicenseTerms.selector,
+            sigRegister
+        );
+        ILicensingModule(licensingModule).registerDerivativeWithLicenseTokens(ipId, licenseTokenIds, royaltyContext);
+    }    
 
     /// @dev Aggregate license mint fees for all parent IPs.
     /// @param payerAddress The address of the payer for the license mint fees.
@@ -352,5 +451,24 @@ contract DepipGateway is AccessControl, IERC721Receiver {
             sigData.deadline,
             sigData.signature
         );
-    }         
+    }  
+
+    /// @dev Collects license tokens from the caller. Assumes the periphery contract has permission to transfer the license tokens.
+    /// @param licenseTokenIds The IDs of the license tokens to be collected.
+    /// @param licenseToken The address of the license token contract.
+    function _collectLicenseTokens(uint256[] calldata licenseTokenIds, address licenseToken) internal {
+        require(licenseTokenIds.length > 0, "StoryCampaign: EmptyLicenseTokens");
+        for (uint256 i = 0; i < licenseTokenIds.length; i++) {
+            address tokenOwner = ILicenseToken(licenseToken).ownerOf(licenseTokenIds[i]);
+
+            if (tokenOwner == address(this)) continue;
+            require(tokenOwner == address(msg.sender), "StoryCampaign: CallerAndNotTokenOwner");
+
+            ILicenseToken(licenseToken).safeTransferFrom(msg.sender, address(this), licenseTokenIds[i]);
+        }
+    }     
+
+    /// @dev Hook to authorize the upgrade according to UUPSUpgradeable
+    /// @param newImplementation The address of the new implementation
+    function _authorizeUpgrade(address newImplementation) internal override {} 
 }
